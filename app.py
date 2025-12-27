@@ -3,117 +3,155 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import time
+from urllib.parse import urlparse
 
 # Page Config
-st.set_page_config(page_title="ADF AEO Scanner", page_icon="🔍", layout="centered")
+st.set_page_config(page_title="Advanced AEO Scanner", page_icon="🧠", layout="centered")
 
-# Custom Styling (Dark Mode)
+# Custom Styling (Dark Mode & AI Aesthetic)
 st.markdown("""
     <style>
     .main {
-        background: linear-gradient(145deg, #1a1a2e, #16213e);
+        background: linear-gradient(145deg, #0f0c29, #302b63, #24243e);
         color: #ffffff;
     }
-    h1 { color: #00d9ff; text-align: center; font-size: 2.5rem; }
-    .stTextInput>div>div>input {
-        color: #000;
-    }
+    h1 { color: #00d9ff; text-align: center; font-family: 'Helvetica Neue', sans-serif; }
     .metric-box {
-        background-color: rgba(255,255,255,0.05);
+        background-color: rgba(0, 0, 0, 0.3);
         padding: 15px;
-        border-radius: 10px;
-        margin-bottom: 10px;
-        border: 1px solid #333;
+        border-radius: 8px;
+        margin-bottom: 12px;
+        border-left: 5px solid #5b4fff;
     }
-    .success-text { color: #00d9ff; font-weight: bold; }
-    .fail-text { color: #ff4b4b; font-weight: bold; }
+    .score-high { color: #00d9ff; }
+    .score-med { color: #f2c94c; }
+    .score-low { color: #ff4b4b; }
     </style>
     """, unsafe_allow_html=True)
 
-# Title
-st.title("AEO Readiness Scanner 2026")
-st.markdown("<p style='text-align: center; color: #a8a8b3;'>Analyze your visibility for ChatGPT, Perplexity, and Gemini.</p>", unsafe_allow_html=True)
+st.title("Advanced AEO Scanner 2.0")
+st.markdown("Analyze your brand's readiness for **ChatGPT, Gemini, and Perplexity**.")
 
 # Input
-url = st.text_input("Enter Website URL (include https://)", placeholder="https://adigitalfit.com")
+target_url = st.text_input("Enter Website URL:", placeholder="https://yourbrand.com")
 
-def analyze_aeo(target_url):
+def check_robots_txt(domain):
+    """Checks if GPTBot or CCBot are blocked in robots.txt"""
+    try:
+        robots_url = f"{domain.scheme}://{domain.netloc}/robots.txt"
+        response = requests.get(robots_url, timeout=5)
+        if response.status_code == 200:
+            content = response.text.lower()
+            if "disallow: /" in content and ("gptbot" in content or "ccbot" in content):
+                return False, "❌ **Critical:** You are blocking AI Bots (GPTBot) in robots.txt."
+            return True, "✅ **Crawlability:** AI Bots are allowed to scan your site."
+        return True, "⚠️ **Crawlability:** No robots.txt found (Assumed Open)."
+    except:
+        return True, "⚠️ **Crawlability:** Could not verify robots.txt."
+
+def analyze_advanced_aeo(url):
     score = 0
     feedback = []
     
-    # "Fake" Browser Headers to bypass simple anti-bot blocks
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     }
 
     try:
-        # 1. CONNECTIVITY CHECK
-        response = requests.get(target_url, headers=headers, timeout=15)
-        
-        # Check if we got blocked
-        if response.status_code == 403:
-            return 0, ["❌ **Security Block:** The website blocked our scanner (403 Forbidden). This often happens with heavy firewalls (Cloudflare). Try a different URL or check your firewall settings."]
+        # 1. BASE CONNECTIVITY
+        domain = urlparse(url)
+        start_time = time.time()
+        response = requests.get(url, headers=headers, timeout=10)
+        load_time = time.time() - start_time
         
         if response.status_code != 200:
-            return 0, [f"❌ **Connection Failed:** Status Code {response.status_code}"]
+            return 0, [f"❌ Connection Failed: {response.status_code}"]
 
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # 2. SPEED CHECK
-        # We give partial points just for being accessible
-        score += 10 
-        feedback.append("✅ **Access:** Website is accessible to crawlers.")
+        # --- NEW PARAMETER 1: ROBOTS/AI PERMISSION (Critical) ---
+        # Weight: 15
+        is_crawlable, robot_msg = check_robots_txt(domain)
+        feedback.append(robot_msg)
+        if is_crawlable:
+            score += 15
+        else:
+            score -= 10 # Penalty for blocking AI
 
-        # 3. SCHEMA CHECK (The most common failure point)
+        # --- NEW PARAMETER 2: LLMS.TXT STANDARD ---
+        # Weight: 10
+        try:
+            llms_url = f"{domain.scheme}://{domain.netloc}/llms.txt"
+            llms_resp = requests.get(llms_url, timeout=3)
+            if llms_resp.status_code == 200:
+                score += 10
+                feedback.append("✅ **AI Standard:** Found '/llms.txt' file. Excellent.")
+            else:
+                feedback.append("⚠️ **AI Standard:** No '/llms.txt' file found. (Recommended for 2026).")
+        except:
+            pass
+
+        # --- PARAMETER 3: ENTITY SCHEMA (Organization/Brand) ---
+        # Weight: 20
         schema_tags = soup.find_all('script', type='application/ld+json')
         found_org = False
+        found_faq = False # New check
         
         if schema_tags:
             for tag in schema_tags:
-                if "Organization" in tag.text or "Brand" in tag.text or "Corporation" in tag.text:
+                txt = tag.text
+                if "Organization" in txt or "Brand" in txt:
                     found_org = True
-                    break
-            
-            if found_org:
-                score += 30
-                feedback.append("✅ **Identity:** 'Organization' Schema found. (Strong Signal)")
-            else:
-                score += 10 # Points for having SOME schema, even if not Org
-                feedback.append("⚠️ **Identity:** Schema found, but no 'Organization' or 'Brand' entity detected.")
+                if "FAQPage" in txt:
+                    found_faq = True
+        
+        if found_org:
+            score += 20
+            feedback.append("✅ **Identity:** Organization Schema detected.")
         else:
-            feedback.append("❌ **Identity:** No JSON-LD Schema found. You are invisible to the Knowledge Graph.")
+            feedback.append("❌ **Identity:** No Organization Schema. You are hard to verify.")
 
-        # 4. CONTENT STRUCTURE (H1 Check)
+        # --- NEW PARAMETER 4: FAQ SCHEMA (Direct Answers) ---
+        # Weight: 15
+        if found_faq:
+            score += 15
+            feedback.append("✅ **AEO Signal:** FAQPage Schema found. Great for direct answers.")
+        else:
+            feedback.append("⚠️ **AEO Signal:** No FAQ Schema. You are missing 'Direct Answer' opportunities.")
+
+        # --- NEW PARAMETER 5: CONTENT DEPTH (For Training) ---
+        # Weight: 15
+        # AI needs text to understand context. Thin pages (under 500 words) get ignored.
+        text_content = soup.get_text(strip=True)
+        word_count = len(text_content.split())
+        
+        if word_count > 1000:
+            score += 15
+            feedback.append(f"✅ **Content Depth:** Rich content detected ({word_count} words).")
+        elif word_count > 500:
+            score += 10
+            feedback.append(f"✅ **Content Depth:** Acceptable content length ({word_count} words).")
+        else:
+            feedback.append(f"❌ **Content Depth:** Thin content ({word_count} words). AI cannot learn enough here.")
+
+        # --- NEW PARAMETER 6: AUTHOR AUTHORITY (E-E-A-T) ---
+        # Weight: 10
+        # AI looks for WHO wrote this to assign trust.
+        author_tag = soup.find("meta", attrs={"name": "author"})
+        if author_tag:
+            score += 10
+            feedback.append(f"✅ **Authority:** Author attribution found ('{author_tag.get('content')}').")
+        else:
+            feedback.append("⚠️ **Authority:** No Author meta tag found. LLMs trust verified experts.")
+
+        # --- PARAMETER 7: TOPIC CLARITY (H1) ---
+        # Weight: 15
         h1 = soup.find('h1')
         if h1:
-            score += 20
-            h1_text = h1.get_text(strip=True)
-            feedback.append(f"✅ **Topic Clarity:** H1 tag detected: '{h1_text[:40]}...'")
+            score += 15
+            feedback.append("✅ **Topic:** H1 tag is present and clear.")
         else:
-            feedback.append("❌ **Topic Clarity:** No H1 tag found. AI cannot understand the page topic.")
-
-        # 5. METADATA CHECK
-        meta_desc = soup.find("meta", attrs={"name": "description"})
-        if meta_desc:
-            score += 20
-            feedback.append("✅ **Meta:** Description tag is present.")
-        else:
-            feedback.append("❌ **Meta:** Missing Meta Description.")
-            
-        # 6. SOCIAL/AUTHORITY CHECK
-        # Scan links for common social platforms
-        links = [a.get('href') for a in soup.find_all('a', href=True)]
-        socials = [l for l in links if 'linkedin.com' in l or 'twitter.com' in l or 'instagram.com' in l or 'youtube.com' in l]
-        
-        if len(socials) > 0:
-            score += 20
-            feedback.append("✅ **Authority:** Social media signals detected.")
-        else:
-            feedback.append("⚠️ **Authority:** No social links found on homepage. Harder to verify 'Entity'.")
+            feedback.append("❌ **Topic:** No H1 tag found.")
 
         return score, feedback
 
@@ -121,33 +159,37 @@ def analyze_aeo(target_url):
         return 0, [f"❌ Error: {str(e)}"]
 
 # Button Logic
-if st.button("Analyze My Site"):
-    if url:
-        with st.spinner('Scanning Knowledge Graph Signals...'):
-            final_score, report = analyze_aeo(url)
+if st.button("Run Advanced Scan"):
+    if target_url:
+        with st.spinner('Analyzing Robots.txt, Schema, and Content Tokens...'):
+            final_score, report = analyze_advanced_aeo(target_url)
         
-        # Display Score (Big & Bold)
-        color = "#ff4b4b" if final_score < 50 else "#00d9ff"
-        st.markdown(f"<h1 style='font-size: 80px; color: {color}; margin-bottom: 0;'>{final_score}/100</h1>", unsafe_allow_html=True)
+        # Color Logic
+        color_class = "score-low"
+        if final_score > 50: color_class = "score-med"
+        if final_score > 80: color_class = "score-high"
         
-        # Status Message
+        # Display Score
+        st.markdown(f"<h1 style='font-size: 90px;' class='{color_class}'>{final_score}/100</h1>", unsafe_allow_html=True)
+        
+        # Status
         if final_score < 50:
-            st.error("INVISIBLE TO AI. Your site lacks the basic language needed for recommendation.")
+            st.error("INVISIBLE. Your site blocks AI or lacks the data structure they need.")
         elif final_score < 80:
-            st.warning("PARTIALLY VISIBLE. You have the basics, but are missing key signals.")
+            st.warning("PARTIALLY VISIBLE. Good for Search 1.0, but missing AEO signals.")
         else:
-            st.success("AI READY. Your technical foundation is strong.")
+            st.success("AEO READY. You are optimized for the Generative Web.")
             
-        # Detailed Report
-        st.markdown("### Analysis Report:")
+        # Report
+        st.markdown("### 🔍 Technical Breakdown")
         for item in report:
             st.markdown(f"<div class='metric-box'>{item}</div>", unsafe_allow_html=True)
 
-        # Call to Action
+        # CTA
         st.markdown("---")
-        st.markdown("### 🚀 Fix Your Score")
-        st.info("Want the templates to reach 100/100? Download the SEO Founder's Playbook 2026.")
-        st.markdown("[**Get the Playbook ->**](https://adigitalfit.com/products/the-seo-founder-s-playbook-2026-scale-organic-growth-like-a-pro)")
-        
+        st.markdown("### 🛠 Fix Your Signals")
+        st.info("Missing 'llms.txt' or 'FAQ Schema'? The Playbook has the copy-paste code.")
+        st.markdown("[**Get the AEO Playbook 2026 ->**](https://adigitalfit.com/products/the-seo-founder-s-playbook-2026-scale-organic-growth-like-a-pro)")
+
     else:
-        st.warning("Please enter a valid URL (including https://).")
+        st.warning("Please enter a URL.")
